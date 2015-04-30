@@ -1,5 +1,5 @@
-Idris to VBA back end
----------------------
+Idris VBA back end
+------------------
 
 Based on Edwin Brady's PHP backend.
 
@@ -13,15 +13,63 @@ situations which will not work just yet.
 
 ## Example
 
-```
+```idris
 module Main
+
+import VBA
+
+------------------------------------------------------------------------
+
+mapM_ : (a -> VBA ()) -> List a -> VBA ()
+mapM_ _ []        = return ()
+mapM_ f (x :: xs) = f x >>= \_ => mapM_ f xs
+
+zipIx : Int -> List a -> List (Int, a)
+zipIx _ []        = []
+zipIx n (x :: xs) = (n, x) :: zipIx (n+1) xs
+
+------------------------------------------------------------------------
 
 pythag : Int -> List (Int, Int, Int)
 pythag max = [(x, y, z) | z <- [1..max], y <- [1..z], x <- [1..y],
-                          x * x + y *y == z * z]
+                          x * x + y * y == z * z ]
 
-main : IO ()
-main = print (pythag 50)
+putResult : (Int, Int, Int, Int) -> VBA ()
+putResult (i, x, y, z) = do
+  putCell i 1 (show x)
+  putCell i 2 (show y)
+  putCell i 3 (show z)
+
+main : VBA ()
+main = do
+  putStrLn "Clearing cells..."
+  clearCells
+
+  putStrLn "Writing headers..."
+  putCell 1 1 "X"
+  putCell 1 2 "Y"
+  putCell 1 3 "Z"
+
+  putStrLn "Calculating..."
+  mapM_ putResult $ zipIx 2 (pythag 50)
 ```
 
 ![screenshot](https://github.com/jystic/idris-vba/raw/master/screenshot.png)
+
+## Foreign Function Interface
+
+The VBA backend has full support for accessing foreign functions.
+
+You can use either the C style FFI:
+
+```idris
+mid : String -> Int -> Int -> VBA String
+mid s i l = foreign FFI_VBA "Mid" (String -> Int -> Int -> VBA String) s i l
+```
+
+Or the JavaScript style FFI:
+
+```idris
+putCell : Int -> Int -> String -> VBA ()
+putCell x y str = foreign FFI_VBA "Cells(%0,%1)=%2" (Int -> Int -> String -> VBA ()) x y str
+```
