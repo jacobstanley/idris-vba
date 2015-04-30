@@ -1,6 +1,8 @@
-pythag.bas: pythag.idr
-	idris pythag.idr --codegen vba -o pythag.bas
+war: pythag.bas
+
+%.bas: %.idr
+	idris $< --codegen vba -o $@
 
 clean:
-	rm pythag.ibc
-	rm pythag.bas
+	rm *.ibc
+	rm *.bas

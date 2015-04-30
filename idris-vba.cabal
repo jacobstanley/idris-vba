@@ -22,6 +22,7 @@ Executable idris-vba
     , filepath
     , haskeline >= 0.7
     , mtl
+    , text
     , transformers
 
   other-modules: IRTS.CodegenVBA
