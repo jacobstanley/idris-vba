@@ -65,8 +65,8 @@ main = do
 
 ## Foreign Function Interface
 
-The VBA backend has full support for accessing both VBA and C foreign
-functions.
+The Idris VBA backend has full support for accessing both VBA and C
+foreign functions.
 
 You can bind simple VBA functions using the standard FFI style:
 
