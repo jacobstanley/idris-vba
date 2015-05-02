@@ -11,6 +11,13 @@ module.
 Yes! But it is not a complete backend by any means, there are many
 situations which will not work just yet.
 
+## Interesting Features
+
+- Unsigned numbers
+- Foreign calls to VBA
+- Foreign calls to C libraries
+- General tail call elimination
+
 ## Example
 
 ```idris
