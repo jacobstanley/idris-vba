@@ -17,28 +17,25 @@ situations which will not work just yet.
 module Main
 
 import VBA
+import Util
 
 ------------------------------------------------------------------------
-
-mapM_ : (a -> VBA ()) -> List a -> VBA ()
-mapM_ _ []        = return ()
-mapM_ f (x :: xs) = f x >>= \_ => mapM_ f xs
 
 zipIx : Int -> List a -> List (Int, a)
 zipIx _ []        = []
 zipIx n (x :: xs) = (n, x) :: zipIx (n+1) xs
-
-------------------------------------------------------------------------
-
-pythag : Int -> List (Int, Int, Int)
-pythag max = [(x, y, z) | z <- [1..max], y <- [1..z], x <- [1..y],
-                          x * x + y * y == z * z ]
 
 putResult : (Int, Int, Int, Int) -> VBA ()
 putResult (i, x, y, z) = do
   putCell i 1 (show x)
   putCell i 2 (show y)
   putCell i 3 (show z)
+
+------------------------------------------------------------------------
+
+pythag : Int -> List (Int, Int, Int)
+pythag max = [(x, y, z) | z <- [1..max], y <- [1..z], x <- [1..y],
+                          x * x + y * y == z * z ]
 
 main : VBA ()
 main = do
@@ -58,18 +55,27 @@ main = do
 
 ## Foreign Function Interface
 
-The VBA backend has full support for accessing foreign functions.
+The VBA backend has full support for accessing both VBA and C foreign
+functions.
 
-You can use either the C style FFI:
+You can bind simple VBA functions using the standard FFI style:
 
 ```idris
 mid : String -> Int -> Int -> VBA String
 mid s i l = foreign FFI_VBA "Mid" (String -> Int -> Int -> VBA String) s i l
 ```
 
-Or the JavaScript style FFI:
+Or property assignment using the indexed FFI style:
 
 ```idris
 putCell : Int -> Int -> String -> VBA ()
 putCell x y str = foreign FFI_VBA "Cells(%0,%1)=%2" (Int -> Int -> String -> VBA ()) x y str
+```
+
+To bind C functions, you need to specify the library which contains the
+function as well as the function name itself, separated by a `/`.
+
+```idris
+htonl : Bits32 -> VBA Bits32
+htonl x = foreign FFI_VBA "libc.dylib/htonl" (Bits32 -> VBA Bits32) x
 ```
