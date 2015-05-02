@@ -1,28 +1,25 @@
 module Main
 
 import VBA
+import Util
 
 ------------------------------------------------------------------------
-
-mapM_ : (a -> VBA ()) -> List a -> VBA ()
-mapM_ _ []        = return ()
-mapM_ f (x :: xs) = f x >>= \_ => mapM_ f xs
 
 zipIx : Int -> List a -> List (Int, a)
 zipIx _ []        = []
 zipIx n (x :: xs) = (n, x) :: zipIx (n+1) xs
-
-------------------------------------------------------------------------
-
-pythag : Int -> List (Int, Int, Int)
-pythag max = [(x, y, z) | z <- [1..max], y <- [1..z], x <- [1..y],
-                          x * x + y * y == z * z ]
 
 putResult : (Int, Int, Int, Int) -> VBA ()
 putResult (i, x, y, z) = do
   putCell i 1 (show x)
   putCell i 2 (show y)
   putCell i 3 (show z)
+
+------------------------------------------------------------------------
+
+pythag : Int -> List (Int, Int, Int)
+pythag max = [(x, y, z) | z <- [1..max], y <- [1..z], x <- [1..y],
+                          x * x + y * y == z * z ]
 
 main : VBA ()
 main = do

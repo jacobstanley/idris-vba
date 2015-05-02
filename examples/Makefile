@@ -1,4 +1,4 @@
-war: pythag.bas
+war: pythag.bas webcloud.bas
 
 %.bas: %.idr
 	idris $< --codegen vba -o $@
