@@ -20,6 +20,9 @@ situations which will not work just yet.
 
 ## Example
 
+See [generated
+code](https://github.com/jystic/idris-vba/blob/master/examples/pythag.bas).
+
 ```idris
 module Main
 
