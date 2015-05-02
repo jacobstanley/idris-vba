@@ -43,14 +43,14 @@ putCell x y str = foreign FFI_VBA "Cells(%0,%1)=%2" (Int -> Int -> String -> VBA
 ------------------------------------------------------------------------
 -- libc
 
-htonl : Bits32 -> VBA Bits32
-htonl x = foreign FFI_VBA "libc.dylib/htonl" (Bits32 -> VBA Bits32) x
+htonl : Bits32 -> Bits32
+htonl x = unsafePerformIO (foreign FFI_VBA "libc.dylib/htonl" (Bits32 -> VBA Bits32) x)
 
-htons : Bits16 -> VBA Bits16
-htons x = foreign FFI_VBA "libc.dylib/htons" (Bits16 -> VBA Bits16) x
+htons : Bits16 -> Bits16
+htons x = unsafePerformIO (foreign FFI_VBA "libc.dylib/htons" (Bits16 -> VBA Bits16) x)
 
-ntohl : Bits32 -> VBA Bits32
-ntohl x = foreign FFI_VBA "libc.dylib/ntohl" (Bits32 -> VBA Bits32) x
+ntohl : Bits32 -> Bits32
+ntohl x = unsafePerformIO (foreign FFI_VBA "libc.dylib/ntohl" (Bits32 -> VBA Bits32) x)
 
-ntohs : Bits16 -> VBA Bits16
-ntohs x = foreign FFI_VBA "libc.dylib/ntohs" (Bits16 -> VBA Bits16) x
+ntohs : Bits16 -> Bits16
+ntohs x = unsafePerformIO (foreign FFI_VBA "libc.dylib/ntohs" (Bits16 -> VBA Bits16) x)
