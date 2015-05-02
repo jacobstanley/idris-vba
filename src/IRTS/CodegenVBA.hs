@@ -63,7 +63,8 @@ codegenVBA ci = writeFile (outputFile ci) code
         m  <- genMain
         return (m, ds)
 
-    code = showSep "\n" (cgLibFns s) <> "\n"
+    code = "' Foreign Functions\n"
+        <> showSep "\n" (cgLibFns s) <> "\n\n"
         <> header <> "\n"
         <> genLoop decls <> "\n"
         <> mainDecl
@@ -77,7 +78,8 @@ genMain :: CG String
 genMain = do
     runMain <- lookupLabel (sMN 0 "runMain")
     return $ unlines [
-        "Public Sub Main"
+        "' Main Entry Point"
+      , "Public Sub Main"
       , "    Idris_MakeOnBits8"
       , "    Idris_MakeOnBits16"
       , "    Idris_MakeOnBits32"
@@ -87,7 +89,8 @@ genMain = do
 
 genLoop :: [String] -> String
 genLoop decls = unlines $ [
-      "Private Function Idris(ByVal fn As Integer)"
+      "' Idris Functions"
+    , "Private Function Idris(ByVal fn As Integer)"
     , "Select Case fn"
     , ""
     ] ++ decls ++ [
@@ -97,7 +100,8 @@ genLoop decls = unlines $ [
 
 header :: String
 header = unlines [
-     "Private R0 as Variant"
+     "' Registers"
+   , "Private R0 as Variant"
    , "Private R1 as Variant"
    , "Private R2 as Variant"
    , "Private R3 as Variant"
@@ -108,10 +112,12 @@ header = unlines [
    , "Private R8 as Variant"
    , "Private R9 as Variant"
    , ""
+   , "' Bit patterns for shift left operations"
    , "Private Idris_OnBits8(0 To 7) As Byte"
    , "Private Idris_OnBits16(0 To 15) As Integer"
    , "Private Idris_OnBits32(0 To 31) As Long"
    , ""
+   , "' Runtime Functions"
    , "Private Sub Idris_MakeOnBits8()"
    , "    Dim j As Integer"
    , "    Dim v As Integer"
@@ -185,6 +191,16 @@ header = unlines [
    , "    If (value And &H80000000) Then hi = &H40000000"
    , "    Idris_LShr32 = (value And &H7FFFFFFE) \\ (2 ^ shift)"
    , "    Idris_LShr32 = (Idris_LShr32 Or (hi \\ (2 ^ (shift - 1))))"
+   , "End Function"
+   , ""
+   , "Private Function Idris_UTrunc16(ByVal value As Long) As Integer"
+   , "    Dim masked As Long"
+   , "    masked = value And &HFFFF&"
+   , "    If masked < &H8000& Then"
+   , "        Idris_UTrunc16 = CInt(masked)"
+   , "    Else"
+   , "        Idris_UTrunc16 = CInt(masked - &H10000)"
+   , "    End If"
    , "End Function"
    , ""
    , "Function Idris_UGt16(ByVal x As Integer, ByVal y As Integer) As Boolean"
@@ -282,13 +298,6 @@ cgRegisters = map register [0..]
 
 ------------------------------------------------------------------------
 -- Expressions
-
--- cgExp converts the SExp into a chunk of vba which calculates the result
--- of an expression, then runs the function on the resulting bit of code.
---
--- We do it this way because we might calculate an expression in a deeply nested
--- case statement, or inside a let, etc, so the assignment/return of the calculated
--- expression itself may happen quite deeply.
 
 cgExp :: (String -> String) -> SExp -> CG String
 cgExp ret (SV (Loc i)) =
@@ -402,13 +411,10 @@ cgAlt ret scr (SConCase lv t _ args exp) = do
 ------------------------------------------------------------------------
 -- FFI Styles
 
--- Private Declare Function socket Lib "libc.dylib" (ByVal domain As Long, ByVal type_ As Long, ByVal protocol As Long) As Long
-
--- Private Declare Function errno Lib "libc.dylib" Alias "__error" () As Long
-
 nativeFFI :: String -> [(FDesc, LVar)] -> FDesc -> CG String
 nativeFFI sig args rt = do
-    name <- global <$> lookupLabel (sUN sig)
+    label <- lookupLabel (sUN sig)
+    let name = "FFI" <> show label
     declareLibFn (decl name)
     callArgs <- mapM (cgVar . snd) args
     return (name <> "(" <> showSep "," callArgs <> ")\n")
@@ -456,7 +462,7 @@ cgConst x = case x of
     Ch  i -> "CInt(" <> vbaHex (ord i) <> ")"
     B8  i -> "CByte(" <> vbaHex i <> ")"
     B16 i -> "CInt(" <> vbaHex i <> ")"
-    B32 i -> "CLnd(" <> vbaHex i <> ")"
+    B32 i -> "CLng(" <> vbaHex i <> ")"
     Str s -> cgString s
 
     TheWorld       -> "0"
@@ -520,8 +526,19 @@ cgPrim (LSExt _ I32) [x] = "CLng(" <> x <> ")"
 cgPrim (LSExt _ INt) [x] = "CLng(" <> x <> ")"
 cgPrim (LSExt _ IBg) [x] = "CLng(" <> x <> ")"
 
-cgPrim p@(LSExt _ _) _ = error $ "Invalid conversion: " <> show p
-cgPrim p@(LZExt _ _) _ = error $ "Invalid conversion: " <> show p
+cgPrim (LIntStr _)   [x] = "CStr(" <> x <> ")"
+cgPrim (LStrInt _)   [x] = "CInt(" <> x <> ")"
+cgPrim (LIntFloat _) [x] = "CDbl(" <> x <> ")"
+cgPrim (LFloatInt _) [x] = "CInt(" <> x <> ")"
+cgPrim (LChInt _)    [x] = x
+cgPrim (LIntCh _)    [x] = x
+
+cgPrim (LTrunc _ I8)  [x] = "CByte(" <> x <> " And &HFF)"
+cgPrim (LTrunc _ I16) [x] = "Idris_UTrunc16(" <> x <> ")"
+
+cgPrim p@(LSExt  _ _) _ = error $ "Invalid conversion: " <> show p
+cgPrim p@(LZExt  _ _) _ = error $ "Invalid conversion: " <> show p
+cgPrim p@(LTrunc _ _) _ = error $ "Invalid conversion: " <> show p
 
 cgPrim (LPlus  _) [l,r] = "(" <> l <> " + "   <> r <> ")"
 cgPrim (LMinus _) [l,r] = "(" <> l <> " - "   <> r <> ")"
@@ -565,14 +582,6 @@ cgPrim (LXOr   _) [l,r] = "(" <> l <> " Xor "  <> r <> ")"
 cgPrim (LCompl _) [x]   = "(Not " <> x <> ")"
 
 cgPrim LStrEq [l,r] = "(" <> l <> " = " <> r <> ")"
-
-cgPrim (LIntStr _)   [x] = "CStr(" <> x <> ")"
-cgPrim (LStrInt _)   [x] = "CInt(" <> x <> ")"
-cgPrim (LIntFloat _) [x] = "CDbl(" <> x <> ")"
-cgPrim (LFloatInt _) [x] = "CInt(" <> x <> ")"
-cgPrim (LChInt _)    [x] = x
-cgPrim (LIntCh _)    [x] = x
-cgPrim (LTrunc _ _)  [x] = x
 
 cgPrim LStrConcat [l,r] = "Idris_Append(" <> l <> ", " <> r <> ")"
 cgPrim LStrCons   [l,r] = "Idris_Append(Chr(" <> l <> "), " <> r <> ")"
