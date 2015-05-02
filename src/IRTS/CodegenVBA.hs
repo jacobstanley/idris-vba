@@ -1,22 +1,22 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- {-# OPTIONS_GHC -w #-}
 
 --module IRTS.CodegenVBA (codegenVBA) where
 module IRTS.CodegenVBA where
 
-import           Control.Applicative (Applicative(..))
+import           Control.Applicative (Applicative(..), (<$>))
 import           Control.Monad.Trans.State.Lazy
-import           Data.List (sort)
 import           Data.Map (Map)
 import qualified Data.Map as M
 import qualified Data.Text as T
-import           Data.Tuple (swap)
 import           IRTS.CodegenCommon
 import qualified IRTS.JavaScript.AST as JavaScript
 import           IRTS.Lang
 import           IRTS.Simplified
 import           Idris.Core.TT hiding (str)
+import           Numeric (showHex)
 import           Prelude hiding (exp)
 
 import           Data.Monoid ((<>))
@@ -41,17 +41,17 @@ declareLibFn fn = CG $ do
     s <- get
     put s { cgLibFns = fn : cgLibFns s }
 
-assignName :: Name -> CG String
-assignName name = CG $ do
+lookupLabel :: Name -> CG Int
+lookupLabel name = CG $ do
     s <- get
     let names = cgNames s
     case M.lookup name names of
-      Just x -> return (global x)
+      Just x -> return x
       Nothing -> do
         let x:xs = cgFresh s
         put s { cgNames = M.insert name x names
               , cgFresh = xs }
-        return (global x)
+        return x
 
 ------------------------------------------------------------------------
 
@@ -63,60 +63,160 @@ codegenVBA ci = writeFile (outputFile ci) code
         m  <- genMain
         return (m, ds)
 
-    code = nameMappings s <> "\n"
-        <> showSep "\n" (cgLibFns s) <> "\n"
+    code = showSep "\n" (cgLibFns s) <> "\n"
         <> header <> "\n"
-        <> showSep "\n" decls <> "\n"
+        <> genLoop decls <> "\n"
         <> mainDecl
+
+doCodegen :: (Name, SDecl) -> CG String
+doCodegen (n, SFun _ args _ exp) = cgFun n args exp
 
 ------------------------------------------------------------------------
 
 genMain :: CG String
 genMain = do
-    runMain <- assignName (sMN 0 "runMain")
+    runMain <- lookupLabel (sMN 0 "runMain")
     return $ unlines [
         "Public Sub Main"
-      , "    Idris_MakeOnBits"
-      , "    Call " <> runMain
+      , "    Idris_MakeOnBits8"
+      , "    Idris_MakeOnBits16"
+      , "    Idris_MakeOnBits32"
+      , "    Call Idris(" <> show runMain <> ")"
       , "End Sub"
       ]
 
-nameMappings :: CGState -> String
-nameMappings s = concatMap mapping
-               . sort
-               . map swap
-               . M.toList
-               $ cgNames s
-  where
-    mapping (i, n) = "' " <> global i <> " = " <> show n <> "\n"
+genLoop :: [String] -> String
+genLoop decls = unlines $ [
+      "Private Function Idris(ByVal fn As Integer)"
+    , "Select Case fn"
+    , ""
+    ] ++ decls ++ [
+      "End Select"
+    , "End Function"
+    ]
 
 header :: String
 header = unlines [
-     "Private Idris_OnBits(0 To 31) As Long"
+     "Private R0 as Variant"
+   , "Private R1 as Variant"
+   , "Private R2 as Variant"
+   , "Private R3 as Variant"
+   , "Private R4 as Variant"
+   , "Private R5 as Variant"
+   , "Private R6 as Variant"
+   , "Private R7 as Variant"
+   , "Private R8 as Variant"
+   , "Private R9 as Variant"
    , ""
-   , "Private Sub Idris_MakeOnBits()"
+   , "Private Idris_OnBits8(0 To 7) As Byte"
+   , "Private Idris_OnBits16(0 To 15) As Integer"
+   , "Private Idris_OnBits32(0 To 31) As Long"
+   , ""
+   , "Private Sub Idris_MakeOnBits8()"
+   , "    Dim j As Integer"
+   , "    Dim v As Integer"
+   , "    For j = 0 To 6"
+   , "        v = v + (2 ^ j)"
+   , "        Idris_OnBits8(j) = v"
+   , "    Next j"
+   , "    Idris_OnBits8(j) = v + &H80"
+   , "End Sub"
+   , ""
+   , "Private Sub Idris_MakeOnBits16()"
+   , "    Dim j As Integer"
+   , "    Dim v As Integer"
+   , "    For j = 0 To 14"
+   , "        v = v + (2 ^ j)"
+   , "        Idris_OnBits16(j) = v"
+   , "    Next j"
+   , "    Idris_OnBits16(j) = v + &H8000"
+   , "End Sub"
+   , ""
+   , "Private Sub Idris_MakeOnBits32()"
    , "    Dim j As Integer"
    , "    Dim v As Long"
    , "    For j = 0 To 30"
    , "        v = v + (2 ^ j)"
-   , "        Idris_OnBits(j) = v"
+   , "        Idris_OnBits32(j) = v"
    , "    Next j"
-   , "    Idris_OnBits(j) = v + &H80000000"
+   , "    Idris_OnBits32(j) = v + &H80000000"
    , "End Sub"
    , ""
-   , "Private Function Idris_LShiftLong(ByVal value As Long, ByVal shift As Integer) As Long"
-   , "    If (value And (2 ^ (31 - shift))) Then GoTo Overflow"
-   , "    Idris_LShiftLong = ((value And Idris_OnBits(31 - shift)) * (2 ^ shift))"
+   , "Private Function Idris_Shl8(ByVal value As Byte, ByVal shift As Integer) As Byte"
+   , "    If (value And (2 ^ (7 - shift))) Then GoTo Overflow"
+   , "    Idris_Shl8 = ((value And Idris_OnBits8(7 - shift)) * (2 ^ shift))"
    , "    Exit Function"
    , "Overflow:"
-   , "    Idris_LShiftLong = ((value And Idris_OnBits(31 - (shift + 1))) * (2 ^ (shift))) Or &H80000000"
+   , "    Idris_Shl8 = ((value And Idris_OnBits8(7 - (shift + 1))) * (2 ^ (shift))) Or &H80"
    , "End Function"
    , ""
-   , "Private Function Idris_RShiftLong(ByVal value As Long, ByVal shift As Integer) As Long"
+   , "Private Function Idris_Shl16(ByVal value As Integer, ByVal shift As Integer) As Integer"
+   , "    If (value And (2 ^ (15 - shift))) Then GoTo Overflow"
+   , "    Idris_Shl16 = ((value And Idris_OnBits16(15 - shift)) * (2 ^ shift))"
+   , "    Exit Function"
+   , "Overflow:"
+   , "    Idris_Shl16 = ((value And Idris_OnBits16(15 - (shift + 1))) * (2 ^ (shift))) Or &H8000"
+   , "End Function"
+   , ""
+   , "Private Function Idris_Shl32(ByVal value As Long, ByVal shift As Integer) As Long"
+   , "    If (value And (2 ^ (31 - shift))) Then GoTo Overflow"
+   , "    Idris_Shl32 = ((value And Idris_OnBits32(31 - shift)) * (2 ^ shift))"
+   , "    Exit Function"
+   , "Overflow:"
+   , "    Idris_Shl32 = ((value And Idris_OnBits32(31 - (shift + 1))) * (2 ^ (shift))) Or &H80000000"
+   , "End Function"
+   , ""
+   , "Private Function Idris_LShr8(ByVal value As Byte, ByVal shift As Integer) As Integer"
+   , "    Dim hi As Long"
+   , "    If (value And &H80) Then hi = &H40"
+   , "    Idris_LShr8 = (value And &H7E) \\ (2 ^ shift)"
+   , "    Idris_LShr8 = (Idris_LShr8 Or (hi \\ (2 ^ (shift - 1))))"
+   , "End Function"
+   , ""
+   , "Private Function Idris_LShr16(ByVal value As Integer, ByVal shift As Integer) As Integer"
+   , "    Dim hi As Long"
+   , "    If (value And &H8000) Then hi = &H4000"
+   , "    Idris_LShr16 = (value And &H7FFE) \\ (2 ^ shift)"
+   , "    Idris_LShr16 = (Idris_LShr16 Or (hi \\ (2 ^ (shift - 1))))"
+   , "End Function"
+   , ""
+   , "Private Function Idris_LShr32(ByVal value As Long, ByVal shift As Integer) As Long"
    , "    Dim hi As Long"
    , "    If (value And &H80000000) Then hi = &H40000000"
-   , "    Idris_RShiftLong = (value And &H7FFFFFFE) \\ (2 ^ shift)"
-   , "    Idris_RShiftLong = (Idris_RShiftLong Or (hi \\ (2 ^ (shift - 1))))"
+   , "    Idris_LShr32 = (value And &H7FFFFFFE) \\ (2 ^ shift)"
+   , "    Idris_LShr32 = (Idris_LShr32 Or (hi \\ (2 ^ (shift - 1))))"
+   , "End Function"
+   , ""
+   , "Function Idris_UGt16(ByVal x As Integer, ByVal y As Integer) As Boolean"
+   , "    Idris_UGt16 = (x > y) Xor (x < 0) Xor (y < 0)"
+   , "End Function"
+   , ""
+   , "Function Idris_UGe16(ByVal x As Integer, ByVal y As Integer) As Boolean"
+   , "    Idris_UGe16 = (x >= y) Xor (x < 0) Xor (y < 0)"
+   , "End Function"
+   , ""
+   , "Function Idris_ULt16(ByVal x As Integer, ByVal y As Integer) As Boolean"
+   , "    Idris_ULt16 = (x < y) Xor (x < 0) Xor (y < 0)"
+   , "End Function"
+   , ""
+   , "Function Idris_ULe16(ByVal x As Integer, ByVal y As Integer) As Boolean"
+   , "    Idris_ULe16 = (x <= y) Xor (x < 0) Xor (y < 0)"
+   , "End Function"
+   , ""
+   , "Function Idris_UGt32(ByVal x As Long, ByVal y As Long) As Boolean"
+   , "    Idris_UGt32 = (x > y) Xor (x < 0) Xor (y < 0)"
+   , "End Function"
+   , ""
+   , "Function Idris_UGe32(ByVal x As Long, ByVal y As Long) As Boolean"
+   , "    Idris_UGe32 = (x >= y) Xor (x < 0) Xor (y < 0)"
+   , "End Function"
+   , ""
+   , "Function Idris_ULt32(ByVal x As Long, ByVal y As Long) As Boolean"
+   , "    Idris_ULt32 = (x < y) Xor (x < 0) Xor (y < 0)"
+   , "End Function"
+   , ""
+   , "Function Idris_ULe32(ByVal x As Long, ByVal y As Long) As Boolean"
+   , "    Idris_ULe32 = (x <= y) Xor (x < 0) Xor (y < 0)"
    , "End Function"
    , ""
    , "Private Function Idris_Error(msg)"
@@ -137,14 +237,11 @@ header = unlines [
    ]
 
 ------------------------------------------------------------------------
+-- Variables
 
---vbaname :: Name -> String
---vbaname n = "Idris_" <> concatMap vbachar (showCG n)
---  where
---    vbachar x | isAlpha x = [x]
---              | isDigit x = [x]
---              | x == '.'  = "_"
---              | otherwise = "_" <> show (fromEnum x) <> "_"
+cgVar :: LVar -> CG String
+cgVar (Loc i)  = return (local i)
+cgVar (Glob n) = global <$> lookupLabel n
 
 global :: Int -> String
 global i = "G" <> show i
@@ -152,73 +249,36 @@ global i = "G" <> show i
 local :: Int -> String
 local i = "L" <> show i
 
-doCodegen :: (Name, SDecl) -> CG String
-doCodegen (n, SFun _ args _ exp) = cgFun n args exp
+register :: Int -> String
+register i = "R" <> show i
 
 ------------------------------------------------------------------------
 -- Functions
 
 cgFun :: Name -> [Name] -> SExp -> CG String
 cgFun n args exp = do
-    name <- assignName n
-    body <- cgExp (ret name) exp'
-    return $ "Private Function " <> decl name <> "\n"
-          <> tailRecLabel <> body
-          <> "End Function\n"
+    name <- lookupLabel n
+    body <- cgExp ret exp
+    return $ "' " <> show n <> "\n"
+          <> "Case " <> show name <> "\n"
+          <> "Idris" <> show name <> ":\n"
+          <> concat (take nargs assignments)
+          <> body
   where
-    decl name      = name <> "(" <> showSep "," (take nargs cgFunArgs) <> ")"
-    ret  name rexp = name <> " = " <> rexp
+    ret rexp = "Idris = " <> rexp
 
     nargs = length args
 
-    exp' = selfTailExp n exp
+    assignments = zipWith cgAssign cgLocals cgRegisters
 
-    tailRecLabel | hasTailExp exp' = "TailRec:\n"
-                 | otherwise       = ""
+cgAssign :: String -> String -> String
+cgAssign lv rv = lv <> " = " <> rv <> "\n"
 
-cgFunArgs :: [String]
-cgFunArgs = map local [0..]
+cgLocals :: [String]
+cgLocals = map local [0..]
 
-------------------------------------------------------------------------
--- Tail Calls
-
--- | Ensure expression only has self-recursive tail calls.
-selfTailExp :: Name -> SExp -> SExp
-selfTailExp self exp = case exp of
-    -- fixup function application
-    SApp True n args | self == n -> SApp True  n args
-    SApp _    n args             -> SApp False n args
-
-    -- traverse sub-expressions
-    SLet n v exp'   -> SLet n (selfTailExp self v) (selfTailExp self exp')
-    SUpdate n exp'  -> SUpdate n (selfTailExp self exp')
-    SCase c v alts  -> SCase c v (map (selfTailAlt self) alts)
-    SChkCase v alts -> SChkCase v (map (selfTailAlt self) alts)
-
-    -- everything else
-    x -> x
-
--- | Ensure alternatives only have self-recursive tail calls.
-selfTailAlt :: Name -> SAlt -> SAlt
-selfTailAlt self alt = case alt of
-    SConCase lv t n args exp -> SConCase lv t n args (selfTailExp self exp)
-    SConstCase c exp         -> SConstCase c (selfTailExp self exp)
-    SDefaultCase exp         -> SDefaultCase (selfTailExp self exp)
-
-hasTailExp :: SExp -> Bool
-hasTailExp exp = case exp of
-    SApp isTail _ _ -> isTail
-    SLet _ v exp'   -> hasTailExp v || hasTailExp exp'
-    SUpdate _ exp'  -> hasTailExp exp'
-    SCase _ _ alts  -> any hasTailAlt alts
-    SChkCase _ alts -> any hasTailAlt alts
-    _               -> False
-
-hasTailAlt :: SAlt -> Bool
-hasTailAlt alt = case alt of
-    SConCase _ _ _ _ exp -> hasTailExp exp
-    SConstCase _ exp     -> hasTailExp exp
-    SDefaultCase exp     -> hasTailExp exp
+cgRegisters :: [String]
+cgRegisters = map register [0..]
 
 ------------------------------------------------------------------------
 -- Expressions
@@ -235,20 +295,20 @@ cgExp ret (SV (Loc i)) =
     return $ ret $ local i <> "\n"
 
 cgExp ret (SV (Glob n)) = do
-    name <- assignName n
-    return $ ret name <> "()\n"
+    label <- lookupLabel n
+    return $ ret ("Idris(" <> show label <> ")\n")
 
-cgExp _ (SApp True _ args) = do
+cgExp _ (SApp True fn args) = do
+    label   <- lookupLabel fn
     appArgs <- mapM cgVar args
-    return $ concat (zipWith assign cgFunArgs appArgs)
-          <> "GoTo TailRec\n"
-  where
-    lv `assign` rv = lv <> " = " <> rv <> "\n"
+    return $ concat (zipWith cgAssign cgRegisters appArgs)
+          <> "GoTo Idris" <> show label <> "\n"
 
-cgExp ret (SApp False f args) = do
-    name    <- assignName f
+cgExp ret (SApp False fn args) = do
+    label   <- lookupLabel fn
     appArgs <- mapM cgVar args
-    return $ ret (name <> "(" <> showSep "," appArgs <> ")\n")
+    return $ concat (zipWith cgAssign cgRegisters appArgs)
+          <> ret ("Idris(" <> show label <> ")\n")
 
 cgExp ret (SLet (Loc i) v sc) = do
     blet <- cgExp (\exp -> local i <> " = " <> exp) v
@@ -348,7 +408,7 @@ cgAlt ret scr (SConCase lv t _ args exp) = do
 
 nativeFFI :: String -> [(FDesc, LVar)] -> FDesc -> CG String
 nativeFFI sig args rt = do
-    name <- assignName (sUN sig)
+    name <- global <$> lookupLabel (sUN sig)
     declareLibFn (decl name)
     callArgs <- mapM (cgVar . snd) args
     return (name <> "(" <> showSep "," callArgs <> ")\n")
@@ -386,24 +446,17 @@ indexedFFI :: String -> [String] -> String
 indexedFFI code args = T.unpack (JavaScript.ffi code args) <> "\n"
 
 ------------------------------------------------------------------------
--- Variables
-
-cgVar :: LVar -> CG String
-cgVar (Loc i)  = return (local i)
-cgVar (Glob n) = assignName n
-
-------------------------------------------------------------------------
 -- Constants
 
 cgConst :: Const -> String
 cgConst x = case x of
-    I   i -> show i
-    BI  i -> show i
-    Fl  f -> show f
-    Ch  i -> show (ord i)
-    B8  i -> show i
-    B16 i -> show i
-    B32 i -> show i
+    I   i -> "CLng(" <> vbaHex i <> "&)"
+    BI  i -> "CLng(" <> vbaHex i <> "&)"
+    Fl  f -> "CDbl(" <> show f <> ")"
+    Ch  i -> "CInt(" <> vbaHex (ord i) <> ")"
+    B8  i -> "CByte(" <> vbaHex i <> ")"
+    B16 i -> "CInt(" <> vbaHex i <> ")"
+    B32 i -> "CLnd(" <> vbaHex i <> ")"
     Str s -> cgString s
 
     TheWorld       -> "0"
@@ -424,6 +477,8 @@ cgConst x = case x of
   where
     msg name = name <> " not supported (tried to compile: " <> show x <> ")"
 
+    vbaHex n = "&H" <> showHex n ""
+
 cgString :: String -> String
 cgString [] = "\"\""
 cgString s  = drop 3 (esc s)
@@ -442,10 +497,31 @@ cgString s  = drop 3 (esc s)
 ------------------------------------------------------------------------
 -- Primitive Operations
 
+pattern I8  = ITFixed IT8
+pattern I16 = ITFixed IT16
+pattern I32 = ITFixed IT32
+pattern INt = ITNative
+pattern IBg = ITBig
+
 cgPrim :: PrimFn -> [String] -> String
 
-cgPrim (LSExt _ _) [x] = x
-cgPrim (LZExt _ _) [x] = x
+cgPrim (LZExt I8  I16) [x] = "CInt(" <> x <> " And &HFF&)"
+cgPrim (LZExt I8  I32) [x] = "CLng(" <> x <> " And &HFF&)"
+cgPrim (LZExt I8  INt) [x] = "CLng(" <> x <> " And &HFF&)"
+cgPrim (LZExt I8  IBg) [x] = "CLng(" <> x <> " And &HFF&)"
+cgPrim (LZExt I16 I32) [x] = "CLng(" <> x <> " And &HFFFF&)"
+cgPrim (LZExt I16 INt) [x] = "CLng(" <> x <> " And &HFFFF&)"
+cgPrim (LZExt I16 IBg) [x] = "CLng(" <> x <> " And &HFFFF&)"
+cgPrim (LZExt I32 INt) [x] = x
+cgPrim (LZExt I32 IBg) [x] = x
+
+cgPrim (LSExt _ I16) [x] = "CInt(" <> x <> ")"
+cgPrim (LSExt _ I32) [x] = "CLng(" <> x <> ")"
+cgPrim (LSExt _ INt) [x] = "CLng(" <> x <> ")"
+cgPrim (LSExt _ IBg) [x] = "CLng(" <> x <> ")"
+
+cgPrim p@(LSExt _ _) _ = error $ "Invalid conversion: " <> show p
+cgPrim p@(LZExt _ _) _ = error $ "Invalid conversion: " <> show p
 
 cgPrim (LPlus  _) [l,r] = "(" <> l <> " + "   <> r <> ")"
 cgPrim (LMinus _) [l,r] = "(" <> l <> " - "   <> r <> ")"
@@ -453,9 +529,30 @@ cgPrim (LTimes _) [l,r] = "(" <> l <> " * "   <> r <> ")"
 --cgPrim (LSDiv  _) [l,r] = "(" <> l <> " \\ "  <> r <> ")"
 cgPrim (LSRem  _) [l,r] = "(" <> l <> " Mod " <> r <> ")"
 
-cgPrim (LLSHR _) [x,s] = "Idris_LShiftLong(" <> x <> ", " <> s <> ")"
+cgPrim (LSHL I8)  [x,s] = "Idris_Shl8(" <> x <> ", " <> s <> ")"
+cgPrim (LSHL I16) [x,s] = "Idris_Shl16(" <> x <> ", " <> s <> ")"
+cgPrim (LSHL I32) [x,s] = "Idris_Shl32(" <> x <> ", " <> s <> ")"
+
+cgPrim (LLSHR I8)  [x,s] = "Idris_LShr8(" <> x <> ", " <> s <> ")"
+cgPrim (LLSHR I16) [x,s] = "Idris_LShr16(" <> x <> ", " <> s <> ")"
+cgPrim (LLSHR I32) [x,s] = "Idris_LShr32(" <> x <> ", " <> s <> ")"
 
 cgPrim (LEq  _) [l,r] = "(" <> l <> " = "  <> r <> ")"
+
+cgPrim (LLt I8) [l,r] = "(" <> l <> " < " <> r <> ")"
+cgPrim (LLe I8) [l,r] = "(" <> l <> " <= " <> r <> ")"
+cgPrim (LGt I8) [l,r] = "(" <> l <> " > " <> r <> ")"
+cgPrim (LGe I8) [l,r] = "(" <> l <> " >= " <> r <> ")"
+
+cgPrim (LLt I16) [l,r] = "Idris_ULt16(" <> l <> "," <> r <> ")"
+cgPrim (LLe I16) [l,r] = "Idris_ULe16(" <> l <> "," <> r <> ")"
+cgPrim (LGt I16) [l,r] = "Idris_UGt16(" <> l <> "," <> r <> ")"
+cgPrim (LGe I16) [l,r] = "Idris_UGe16(" <> l <> "," <> r <> ")"
+
+cgPrim (LLt I32) [l,r] = "Idris_ULt32(" <> l <> "," <> r <> ")"
+cgPrim (LLe I32) [l,r] = "Idris_ULe32(" <> l <> "," <> r <> ")"
+cgPrim (LGt I32) [l,r] = "Idris_UGt32(" <> l <> "," <> r <> ")"
+cgPrim (LGe I32) [l,r] = "Idris_UGe32(" <> l <> "," <> r <> ")"
 
 cgPrim (LSLt _) [l,r] = "(" <> l <> " < "  <> r <> ")"
 cgPrim (LSLe _) [l,r] = "(" <> l <> " <= " <> r <> ")"
@@ -467,7 +564,7 @@ cgPrim (LOr    _) [l,r] = "(" <> l <> " Or  "  <> r <> ")"
 cgPrim (LXOr   _) [l,r] = "(" <> l <> " Xor "  <> r <> ")"
 cgPrim (LCompl _) [x]   = "(Not " <> x <> ")"
 
-cgPrim LStrEq [l, r] = "(" <> l <> " = " <> r <> ")"
+cgPrim LStrEq [l,r] = "(" <> l <> " = " <> r <> ")"
 
 cgPrim (LIntStr _)   [x] = "CStr(" <> x <> ")"
 cgPrim (LStrInt _)   [x] = "CInt(" <> x <> ")"
