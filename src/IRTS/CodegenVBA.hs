@@ -8,6 +8,7 @@ module IRTS.CodegenVBA where
 
 import           Control.Applicative (Applicative(..), (<$>))
 import           Control.Monad.Trans.State.Lazy
+import           Data.List (isPrefixOf)
 import           Data.Map (Map)
 import qualified Data.Map as M
 import qualified Data.Text as T
@@ -117,7 +118,25 @@ header = unlines [
    , "Private Idris_OnBits16(0 To 15) As Integer"
    , "Private Idris_OnBits32(0 To 31) As Long"
    , ""
+   , "' Runtime Foreign Functions"
+   , "Private Declare Function Idris_Memcpy Lib \"libc.dylib\" Alias \"memcpy\" (ByVal dst As Long, ByVal src As Long, ByVal n As Long) As Long"
+   , ""
+   , "' Runtime Types"
+   , "Type Idris_SockAddr"
+   , "    sin_len As Byte"
+   , "    sin_family As Byte"
+   , "    sin_port As Integer"
+   , "    sin_addr As Long"
+   , "    sin_zero(7) As Byte"
+   , "End Type"
+   , ""
    , "' Runtime Functions"
+   , "Private Function Idris_MakeSockAddr() As Idris_SockAddr"
+   , "  Dim addr As Idris_SockAddr"
+   , "  addr.sin_len = Len(addr)"
+   , "  Idris_MakeSockAddr = addr"
+   , "End Function"
+   , ""
    , "Private Sub Idris_MakeOnBits8()"
    , "    Dim j As Integer"
    , "    Dim v As Integer"
@@ -203,36 +222,42 @@ header = unlines [
    , "    End If"
    , "End Function"
    , ""
-   , "Function Idris_UGt16(ByVal x As Integer, ByVal y As Integer) As Boolean"
+   , "Private Function Idris_UGt16(ByVal x As Integer, ByVal y As Integer) As Boolean"
    , "    Idris_UGt16 = (x > y) Xor (x < 0) Xor (y < 0)"
    , "End Function"
    , ""
-   , "Function Idris_UGe16(ByVal x As Integer, ByVal y As Integer) As Boolean"
+   , "Private Function Idris_UGe16(ByVal x As Integer, ByVal y As Integer) As Boolean"
    , "    Idris_UGe16 = (x >= y) Xor (x < 0) Xor (y < 0)"
    , "End Function"
    , ""
-   , "Function Idris_ULt16(ByVal x As Integer, ByVal y As Integer) As Boolean"
+   , "Private Function Idris_ULt16(ByVal x As Integer, ByVal y As Integer) As Boolean"
    , "    Idris_ULt16 = (x < y) Xor (x < 0) Xor (y < 0)"
    , "End Function"
    , ""
-   , "Function Idris_ULe16(ByVal x As Integer, ByVal y As Integer) As Boolean"
+   , "Private Function Idris_ULe16(ByVal x As Integer, ByVal y As Integer) As Boolean"
    , "    Idris_ULe16 = (x <= y) Xor (x < 0) Xor (y < 0)"
    , "End Function"
    , ""
-   , "Function Idris_UGt32(ByVal x As Long, ByVal y As Long) As Boolean"
+   , "Private Function Idris_UGt32(ByVal x As Long, ByVal y As Long) As Boolean"
    , "    Idris_UGt32 = (x > y) Xor (x < 0) Xor (y < 0)"
    , "End Function"
    , ""
-   , "Function Idris_UGe32(ByVal x As Long, ByVal y As Long) As Boolean"
+   , "Private Function Idris_UGe32(ByVal x As Long, ByVal y As Long) As Boolean"
    , "    Idris_UGe32 = (x >= y) Xor (x < 0) Xor (y < 0)"
    , "End Function"
    , ""
-   , "Function Idris_ULt32(ByVal x As Long, ByVal y As Long) As Boolean"
+   , "Private Function Idris_ULt32(ByVal x As Long, ByVal y As Long) As Boolean"
    , "    Idris_ULt32 = (x < y) Xor (x < 0) Xor (y < 0)"
    , "End Function"
    , ""
-   , "Function Idris_ULe32(ByVal x As Long, ByVal y As Long) As Boolean"
+   , "Private Function Idris_ULe32(ByVal x As Long, ByVal y As Long) As Boolean"
    , "    Idris_ULe32 = (x <= y) Xor (x < 0) Xor (y < 0)"
+   , "End Function"
+   , ""
+   , "Private Function Idris_PeekBits32(ByVal ptr As Long) As Long"
+   , "    Dim result As Long"
+   , "    Call Idris_Memcpy(VarPtr(result), ptr, Len(result))"
+   , "    Idris_PeekBits32 = result"
    , "End Function"
    , ""
    , "Private Function Idris_Error(msg)"
@@ -377,9 +402,10 @@ cgExp ret (SForeign rt (FStr f) args) = do
       _                    -> return (ret exp)
   where
     call args'
-        | '%' `elem` f = return (indexedFFI  f args')
-        | '/' `elem` f = nativeFFI f args rt
-        | otherwise    = return (standardFFI f args')
+        | "prim$" `isPrefixOf` f = return (primitiveFFI f args')
+        | '%' `elem` f           = return (indexedFFI  f args')
+        | '/' `elem` f           = nativeFFI f args rt
+        | otherwise              = return (standardFFI f args')
 
 cgExp _ exp = error $ "SExp (" <> show exp <> ") not implemented"
 
@@ -435,6 +461,7 @@ nativeFFI sig args rt = do
         FCon (UN "VBA_Int")    -> "Long"
         FCon (UN "VBA_Float")  -> "Double"
         FCon (UN "VBA_String") -> "String"
+        FCon (UN "VBA_Ptr")    -> "Long"
         x -> error ("Cannot compile foreign type: " <> show x)
 
     decl name = "Private Declare "
@@ -450,6 +477,15 @@ standardFFI code args = code <> "(" <> showSep "," args <> ")\n"
 
 indexedFFI :: String -> [String] -> String
 indexedFFI code args = T.unpack (JavaScript.ffi code args) <> "\n"
+
+primitiveFFI :: String -> [String] -> String
+primitiveFFI = go
+  where
+     go "prim$peekBits32" [x] = "Idris_PeekBits32(" <> x <> ")\n"
+     go "prim$mkSockAddr" []  = "Idris_MakeSockAddr()\n"
+
+     go fn args = error $ "Unknown primitive: " <> show fn
+                       <> "(" <> show (length args) <> ")"
 
 ------------------------------------------------------------------------
 -- Constants

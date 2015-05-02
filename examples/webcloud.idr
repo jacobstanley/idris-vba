@@ -1,7 +1,12 @@
 module Main
 
 import VBA
-import Util
+import Socket
+
+------------------------------------------------------------------------
+
+printError : SocketError -> VBA ()
+printError err = putStrLn ("Socket error: " ++ show err)
 
 ------------------------------------------------------------------------
 
@@ -18,3 +23,13 @@ main = do
 
   putStrLn $ "n16 = " ++ show n16
   putStrLn $ "n32 = " ++ show n32
+
+  case !(socket AF_INET Stream 0) of
+    Left  err  => printError err
+    Right sock => do
+      print sock
+      case !(bind sock 8080) of
+        Nothing  => putStrLn "Bound to port 8080"
+        Just err => printError err
+      close sock
+      putStrLn "Socket Closed"

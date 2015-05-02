@@ -9,6 +9,9 @@ mapM_ f (x :: xs) = f x >>= \_ => mapM_ f xs
 ------------------------------------------------------------------------
 -- Bits8
 
+instance Cast Bits8 Bits32 where
+    cast = prim__zextB8_B32
+
 instance Cast Bits8 Int where
     cast = prim__zextB8_Int
 
