@@ -11,6 +11,8 @@ import           Control.Monad.Trans.State.Lazy
 import           Data.List (isPrefixOf)
 import           Data.Map (Map)
 import qualified Data.Map as M
+import           Data.Set (Set)
+import qualified Data.Set as S
 import qualified Data.Text as T
 import           IRTS.CodegenCommon
 import qualified IRTS.JavaScript.AST as JavaScript
@@ -26,7 +28,7 @@ import           Data.Char
 ------------------------------------------------------------------------
 
 data CGState = CGState {
-      cgLibFns :: [String]
+      cgLibFns :: Set String
     , cgNames  :: Map Name Int
     , cgFresh  :: [Int]
     } deriving (Show)
@@ -35,12 +37,12 @@ newtype CG a = CG { unCG :: State CGState a }
     deriving (Functor, Applicative, Monad)
 
 runCG :: CG a -> (a, CGState)
-runCG (CG cg) = runState cg (CGState [] M.empty [0..])
+runCG (CG cg) = runState cg (CGState S.empty M.empty [0..])
 
 declareLibFn :: String -> CG ()
 declareLibFn fn = CG $ do
     s <- get
-    put s { cgLibFns = fn : cgLibFns s }
+    put s { cgLibFns = S.insert fn (cgLibFns s) }
 
 lookupLabel :: Name -> CG Int
 lookupLabel name = CG $ do
@@ -65,7 +67,7 @@ codegenVBA ci = writeFile (outputFile ci) code
         return (m, ds)
 
     code = "' Foreign Functions\n"
-        <> showSep "\n" (cgLibFns s) <> "\n\n"
+        <> showSep "\n" (S.toList (cgLibFns s)) <> "\n\n"
         <> header <> "\n"
         <> genLoop decls <> "\n"
         <> mainDecl
@@ -120,22 +122,7 @@ header = unlines [
    , ""
    , "' Runtime Foreign Functions"
    , "Private Declare Function Idris_Memcpy Lib \"libc.dylib\" Alias \"memcpy\" (ByVal dst As Long, ByVal src As Long, ByVal n As Long) As Long"
-   , ""
-   , "' Runtime Types"
-   , "Type Idris_SockAddr"
-   , "    sin_len As Byte"
-   , "    sin_family As Byte"
-   , "    sin_port As Integer"
-   , "    sin_addr As Long"
-   , "    sin_zero(7) As Byte"
-   , "End Type"
-   , ""
-   , "' Runtime Functions"
-   , "Private Function Idris_MakeSockAddr() As Idris_SockAddr"
-   , "  Dim addr As Idris_SockAddr"
-   , "  addr.sin_len = Len(addr)"
-   , "  Idris_MakeSockAddr = addr"
-   , "End Function"
+   , "Private Declare Function Idris_Strlen Lib \"libc.dylib\" Alias \"strlen\" (ByVal ptr As Long) As Long"
    , ""
    , "Private Sub Idris_MakeOnBits8()"
    , "    Dim j As Integer"
@@ -254,10 +241,47 @@ header = unlines [
    , "    Idris_ULe32 = (x <= y) Xor (x < 0) Xor (y < 0)"
    , "End Function"
    , ""
+   , "Private Function Idris_PeekBits8(ByVal ptr As Long) As Long"
+   , "    Dim x As Long"
+   , "    Call Idris_Memcpy(VarPtr(x), ptr, Len(x))"
+   , "    Idris_PeekBits8 = x"
+   , "End Function"
+   , ""
+   , "Private Function Idris_PeekBits16(ByVal ptr As Long) As Long"
+   , "    Dim x As Long"
+   , "    Call Idris_Memcpy(VarPtr(x), ptr, Len(x))"
+   , "    Idris_PeekBits16 = x"
+   , "End Function"
+   , ""
    , "Private Function Idris_PeekBits32(ByVal ptr As Long) As Long"
-   , "    Dim result As Long"
-   , "    Call Idris_Memcpy(VarPtr(result), ptr, Len(result))"
-   , "    Idris_PeekBits32 = result"
+   , "    Dim x As Long"
+   , "    Call Idris_Memcpy(VarPtr(x), ptr, Len(x))"
+   , "    Idris_PeekBits32 = x"
+   , "End Function"
+   , ""
+   , "Private Function Idris_PeekCString(ByVal ptr As Long) As Long"
+   , "    Dim slen As Long"
+   , "    Dim str As String"
+   , "    slen = Idris_Strlen(ptr)"
+   , "    str = String(slen, 0)"
+   , "    Call Idris_Memcpy(StrPtr(str), ptr, slen)"
+   , "    Idris_PeekCString = str"
+   , "End Function"
+   , ""
+   , "Private Sub Idris_PokeBits8(ByVal ptr As Long, ByVal x As Byte)"
+   , "    Call Idris_Memcpy(ptr, VarPtr(x), Len(x))"
+   , "End Sub"
+   , ""
+   , "Private Sub Idris_PokeBits16(ByVal ptr As Long, ByVal x As Integer)"
+   , "    Call Idris_Memcpy(ptr, VarPtr(x), Len(x))"
+   , "End Sub"
+   , ""
+   , "Private Sub Idris_PokeBits32(ByVal ptr As Long, ByVal x As Long)"
+   , "    Call Idris_Memcpy(ptr, VarPtr(x), Len(x))"
+   , "End Sub"
+   , ""
+   , "Private Function Idris_PlusPtr(ByVal ptr As Long, ByVal off As Long) As Long"
+   , "    Idris_PlusPtr = ptr + off"
    , "End Function"
    , ""
    , "Private Function Idris_Error(msg)"
@@ -398,14 +422,18 @@ cgExp ret (SForeign rt (FStr f) args) = do
     callArgs <- mapM (cgVar . snd) args
     exp <- call callArgs
     case rt of
-      FCon (UN "VBA_Unit") -> return (exp <> ret "0\n")
-      _                    -> return (ret exp)
+      FCon (UN "VBA_Unit") | isIndexed -> return (exp <> ret "0\n")
+                           | otherwise -> return ("Call " <> exp <> ret "0\n")
+      _                                -> return (ret exp)
   where
-    call args'
-        | "prim$" `isPrefixOf` f = return (primitiveFFI f args')
-        | '%' `elem` f           = return (indexedFFI  f args')
-        | '/' `elem` f           = nativeFFI f args rt
-        | otherwise              = return (standardFFI f args')
+    call args' | isPrimitive = return (primitiveFFI f args')
+               | isIndexed   = return (indexedFFI  f args')
+               | isNative    = nativeFFI f args rt
+               | otherwise   = return (standardFFI f args')
+
+    isPrimitive = "prim$" `isPrefixOf` f
+    isIndexed   = '%' `elem` f
+    isNative    = '/' `elem` f
 
 cgExp _ exp = error $ "SExp (" <> show exp <> ") not implemented"
 
@@ -448,10 +476,13 @@ nativeFFI sig args rt = do
     (lib, sig') = break (== '/') sig
     alias       = drop 1 sig'
 
-    declRet     = declType rt
     declArgs    = zipWith declArg argNames (map fst args)
     argNames    = map (\i -> "arg" <> show i) ([1..] :: [Int])
     declArg n t = "ByVal " <> n <> " As " <> declType t
+
+    (funSub, declRet) = case rt of
+        FCon (UN "VBA_Unit") -> ("Sub", "")
+        _                    -> ("Function", " As " <> declType rt)
 
     declType t = case t of
         FCon (UN "VBA_Bool")   -> "Boolean"
@@ -462,14 +493,15 @@ nativeFFI sig args rt = do
         FCon (UN "VBA_Float")  -> "Double"
         FCon (UN "VBA_String") -> "String"
         FCon (UN "VBA_Ptr")    -> "Long"
-        x -> error ("Cannot compile foreign type: " <> show x)
+        x -> error $ "Cannot compile foreign type: " <> show x
+                  <> " (in " <> show sig <> ")"
 
     decl name = "Private Declare "
-             <> "Function " <> name <> " "
+             <> funSub <> " " <> name <> " "
              <> "Lib \"" <> lib <> "\" "
              <> "Alias \"" <> alias <> "\" "
-             <> "(" <> showSep ", " declArgs <> ") "
-             <> "As " <> declRet
+             <> "(" <> showSep ", " declArgs <> ")"
+             <> declRet
 
 standardFFI :: String -> [String] -> String
 standardFFI code []   = code
@@ -481,11 +513,17 @@ indexedFFI code args = T.unpack (JavaScript.ffi code args) <> "\n"
 primitiveFFI :: String -> [String] -> String
 primitiveFFI = go
   where
-     go "prim$peekBits32" [x] = "Idris_PeekBits32(" <> x <> ")\n"
-     go "prim$mkSockAddr" []  = "Idris_MakeSockAddr()\n"
+    go "prim$peekBits8"   [ptr]     = "Idris_PeekBits8(" <> ptr <> ")\n"
+    go "prim$peekBits16"  [ptr]     = "Idris_PeekBits16(" <> ptr <> ")\n"
+    go "prim$peekBits32"  [ptr]     = "Idris_PeekBits32(" <> ptr <> ")\n"
+    go "prim$peekCString" [ptr]     = "Idris_PeekCString(" <> ptr <> ")\n"
+    go "prim$pokeBits8"   [ptr,x]   = "Idris_PokeBits8(" <> ptr <> "," <> x <> ")\n"
+    go "prim$pokeBits16"  [ptr,x]   = "Idris_PokeBits16(" <> ptr <> "," <> x <> ")\n"
+    go "prim$pokeBits32"  [ptr,x]   = "Idris_PokeBits32(" <> ptr <> "," <> x <> ")\n"
+    go "prim$plusPtr"     [ptr,off] = "Idris_PlusPtr(" <> ptr <> "," <> off <> ")\n"
 
-     go fn args = error $ "Unknown primitive: " <> show fn
-                       <> "(" <> show (length args) <> ")"
+    go fn args = error $ "Unknown primitive: " <> show fn
+                      <> "(" <> show (length args) <> ")"
 
 ------------------------------------------------------------------------
 -- Constants
@@ -571,6 +609,7 @@ cgPrim (LIntCh _)    [x] = x
 
 cgPrim (LTrunc _ I8)  [x] = "CByte(" <> x <> " And &HFF)"
 cgPrim (LTrunc _ I16) [x] = "Idris_UTrunc16(" <> x <> ")"
+cgPrim (LTrunc _ I32) [x] = x
 
 cgPrim p@(LSExt  _ _) _ = error $ "Invalid conversion: " <> show p
 cgPrim p@(LZExt  _ _) _ = error $ "Invalid conversion: " <> show p

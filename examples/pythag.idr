@@ -32,4 +32,4 @@ main = do
   putCell 1 3 "Z"
 
   putStrLn "Calculating..."
-  mapM_ putResult $ zipIx 2 (pythag 50)
+  traverse_ putResult $ zipIx 2 (pythag 50)
