@@ -80,7 +80,7 @@ ErrorCode = Bits32
 
 ||| Native C socket descriptor.
 SocketDescriptor : Type
-SocketDescriptor = Bits32
+SocketDescriptor = Bits64
 
 ||| Socket port.
 Port : Type
@@ -113,57 +113,53 @@ instance Show Socket where
 -- Conversions
 
 htonl : Bits32 -> Bits32
-htonl x = unsafePerformIO (foreign FFI_VBA "libc.dylib/htonl" (Bits32 -> VBA Bits32) x)
+htonl x = unsafePerformIO (foreign FFI_VBA "ws2_32/htonl" (Bits32 -> VBA Bits32) x)
 
 htons : Bits16 -> Bits16
-htons x = unsafePerformIO (foreign FFI_VBA "libc.dylib/htons" (Bits16 -> VBA Bits16) x)
+htons x = unsafePerformIO (foreign FFI_VBA "ws2_32/htons" (Bits16 -> VBA Bits16) x)
 
 ntohl : Bits32 -> Bits32
-ntohl x = unsafePerformIO (foreign FFI_VBA "libc.dylib/ntohl" (Bits32 -> VBA Bits32) x)
+ntohl x = unsafePerformIO (foreign FFI_VBA "ws2_32/ntohl" (Bits32 -> VBA Bits32) x)
 
 ntohs : Bits16 -> Bits16
-ntohs x = unsafePerformIO (foreign FFI_VBA "libc.dylib/ntohs" (Bits16 -> VBA Bits16) x)
+ntohs x = unsafePerformIO (foreign FFI_VBA "ws2_32/ntohs" (Bits16 -> VBA Bits16) x)
 
 inet_ntoa : IPv4 -> String
 inet_ntoa addr = unsafePerformIO $ do
-  ptr <- foreign FFI_VBA "libc.dylib/inet_ntoa" (Bits32 -> VBA Ptr) addr
+  ptr <- foreign FFI_VBA "ws2_32/inet_ntoa" (Bits32 -> VBA Ptr) addr
   peekCString ptr
 
 ------------------------------------------------------------------------
 -- Error Handling
 
 getLastError : VBA ErrorCode
-getLastError = do
-  ptr <- foreign FFI_VBA "libc.dylib/__error" (VBA Ptr)
-  peekBits32 ptr
+getLastError = foreign FFI_VBA "ws2_32/WSAGetLastError" (VBA Bits32)
 
 ------------------------------------------------------------------------
 -- Descriptor Manipulation
 
 private
-fcntl : SocketDescriptor -> Bits32 -> Bits32 -> VBA Bits32
-fcntl fd cmd arg = foreign FFI_VBA "libc.dylib/fcntl"
-                           (SocketDescriptor -> Bits32 -> Bits32 -> VBA Bits32)
-                           fd cmd arg
+ioctlsocket : SocketDescriptor -> Bits32 -> Ptr -> VBA Bits32
+ioctlsocket fd cmd ptr = foreign FFI_VBA "ws2_32/ioctlsocket"
+                                 (SocketDescriptor -> Bits32 -> Ptr -> VBA Bits32)
+                                 fd cmd ptr
 
 private
-F_GETFL : Bits32
-F_GETFL = 3
-
-private
-F_SETFL : Bits32
-F_SETFL = 4
-
-private
-O_NONBLOCK : Bits32
-O_NONBLOCK = 4
+FIONBIO : Bits32
+FIONBIO = 0x5421
 
 setNonBlocking : Socket -> VBAExcept ErrorCode ()
 setNonBlocking sock = vbaM $ do
   let fd = descriptor sock
-  flags  <- fcntl fd F_GETFL 0
-  result <- fcntl fd F_SETFL (flags `prim__orB32` O_NONBLOCK)
-  if result == 0xffffffff
+
+  ptr <- alloc 4
+  pokeBits32 ptr 1
+  result <- ioctlsocket fd FIONBIO ptr
+  free ptr
+
+  print result
+
+  if result /= 0
      then Left <$> getLastError
      else return (Right ())
 
@@ -193,7 +189,7 @@ sockAddrLen = 16
 
 allocSockAddr : VBA Ptr
 allocSockAddr = do
-  ptr <- calloc sockAddrLen 1
+  ptr <- alloc sockAddrLen
   pokeBits8 ptr (cast sockAddrLen)
   return ptr
 
@@ -219,17 +215,17 @@ peekSockAddr ptr = do
 ||| number. Returns either a socket or an error.
 socket : SocketFamily -> SocketType -> ProtocolNumber -> VBAExcept ErrorCode Socket
 socket family type proto = vbaM $ do
-  result <- foreign FFI_VBA "libc.dylib/socket"
-                            (Bits32 -> Bits32 -> Bits32 -> VBA Bits32)
+  result <- foreign FFI_VBA "ws2_32/socket"
+                            (Bits32 -> Bits32 -> Bits32 -> VBA SocketDescriptor)
                             (cast (toCode family)) (cast (toCode type)) proto
 
-  if result == 0xffffffff
+  if result == compl 0
      then Left <$> getLastError
      else return $ Right (MkSocket result family type proto)
 
 private
 closeDescriptor : SocketDescriptor -> VBA ()
-closeDescriptor sd = foreign FFI_VBA "libc.dylib/close" (SocketDescriptor -> VBA ()) sd
+closeDescriptor sd = foreign FFI_VBA "ws2_32/close" (SocketDescriptor -> VBA ()) sd
 
 ||| Close a socket.
 close : Socket -> VBAExcept ErrorCode ()
@@ -245,13 +241,13 @@ bind sock port = vbaM $ do
   addrPtr <- allocSockAddr
   pokeSockAddr addrPtr (MkSockAddr (family sock) 0 port)
 
-  result <- foreign FFI_VBA "libc.dylib/bind"
-                    (Bits32 -> Ptr -> Bits32 -> VBA Bits32)
+  result <- foreign FFI_VBA "ws2_32/bind"
+                    (SocketDescriptor -> Ptr -> Bits32 -> VBA Bits32)
                     (descriptor sock) addrPtr (cast sockAddrLen)
 
   free addrPtr
 
-  if result == 0xffffffff
+  if result == compl 0
      then Left <$> getLastError
      else return (Right ())
 
@@ -261,11 +257,11 @@ bind sock port = vbaM $ do
 ||| Listen for connections on a socket.
 listen : Socket -> Backlog -> VBAExcept ErrorCode ()
 listen sock backlog = vbaM $ do
-  result <- foreign FFI_VBA "libc.dylib/listen"
-                    (Bits32 -> Bits32 -> VBA Bits32)
+  result <- foreign FFI_VBA "ws2_32/listen"
+                    (SocketDescriptor -> Bits32 -> VBA Bits32)
                     (descriptor sock) backlog
 
-  if result == 0xffffffff
+  if result == compl 0
      then Left <$> getLastError
      else return (Right ())
 
@@ -274,14 +270,14 @@ accept : Socket -> VBAExcept ErrorCode (Maybe (Socket, SocketAddress))
 accept sock = vbaM $ do
   addrPtr <- allocSockAddr
 
-  result <- foreign FFI_VBA "libc.dylib/accept"
-                    (Bits32 -> Ptr -> Bits32 -> VBA Bits32)
+  result <- foreign FFI_VBA "ws2_32/accept"
+                    (SocketDescriptor -> Ptr -> Bits32 -> VBA SocketDescriptor)
                     (descriptor sock) addrPtr (cast sockAddrLen)
 
   maddr <- peekSockAddr addrPtr
   free addrPtr
 
-  if result == 0xffffffff
+  if result == compl 0
      then Left <$> getLastError
      else case maddr of
        Nothing => do

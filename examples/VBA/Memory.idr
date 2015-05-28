@@ -11,14 +11,11 @@ import Util
 ------------------------------------------------------------------------
 -- Allocation
 
-malloc : Nat -> VBA Ptr
-malloc sz = foreign FFI_VBA "libc.dylib/malloc" (Bits32 -> VBA Ptr) (cast sz)
-
-calloc : Nat -> Nat -> VBA Ptr
-calloc n sz = foreign FFI_VBA "libc.dylib/calloc" (Bits32 -> Bits32 -> VBA Ptr) (cast n) (cast sz)
+alloc : Nat -> VBA Ptr
+alloc sz = foreign FFI_VBA "prim$alloc" (Bits64 -> VBA Ptr) (cast sz)
 
 free : Ptr -> VBA ()
-free ptr = foreign FFI_VBA "libc.dylib/free" (Ptr -> VBA ()) ptr
+free ptr = foreign FFI_VBA "prim$free" (Ptr -> VBA ()) ptr
 
 ------------------------------------------------------------------------
 -- Peeking
@@ -31,6 +28,9 @@ peekBits16 ptr = foreign FFI_VBA "prim$peekBits16" (Ptr -> VBA Bits16) ptr
 
 peekBits32 : Ptr -> VBA Bits32
 peekBits32 ptr = foreign FFI_VBA "prim$peekBits32" (Ptr -> VBA Bits32) ptr
+
+peekBits64 : Ptr -> VBA Bits64
+peekBits64 ptr = foreign FFI_VBA "prim$peekBits64" (Ptr -> VBA Bits64) ptr
 
 peekCString : Ptr -> VBA String
 peekCString ptr = foreign FFI_VBA "prim$peekCString" (Ptr -> VBA String) ptr
@@ -46,6 +46,9 @@ pokeBits16 ptr x = foreign FFI_VBA "prim$pokeBits16" (Ptr -> Bits16 -> VBA ()) p
 
 pokeBits32 : Ptr -> Bits32 -> VBA ()
 pokeBits32 ptr x = foreign FFI_VBA "prim$pokeBits32" (Ptr -> Bits32 -> VBA ()) ptr x
+
+pokeBits64 : Ptr -> Bits64 -> VBA ()
+pokeBits64 ptr x = foreign FFI_VBA "prim$pokeBits64" (Ptr -> Bits64 -> VBA ()) ptr x
 
 ------------------------------------------------------------------------
 -- Pointer Arithmetic

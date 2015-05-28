@@ -5,19 +5,22 @@ module Util
 -- TODO It would be better if we could use Data.Bits but I couldn't get
 -- TODO it working without the backend trying to compile 64-bit numbers, which
 -- TODO VBA doesn't have.
+-- TODO Not true anymore! Upgraded to VBA7.
 
 class Bits a where
-  or  : a -> a -> a
-  and : a -> a -> a
-  xor : a -> a -> a
+  or    : a -> a -> a
+  and   : a -> a -> a
+  xor   : a -> a -> a
+  compl : a -> a
 
 ------------------------------------------------------------------------
 -- Bits8
 
 instance Bits Bits8 where
-    or  = prim__orB8
-    and = prim__andB8
-    xor = prim__xorB8
+    or    = prim__orB8
+    and   = prim__andB8
+    xor   = prim__xorB8
+    compl = prim__complB8
 
 instance Cast Bits8 Bits32 where
     cast = prim__zextB8_B32
@@ -52,9 +55,10 @@ instance Enum Bits8 where
 -- Bits16
 
 instance Bits Bits16 where
-    or  = prim__orB16
-    and = prim__andB16
-    xor = prim__xorB16
+    or    = prim__orB16
+    and   = prim__andB16
+    xor   = prim__xorB16
+    compl = prim__complB16
 
 instance Cast Bits16 Int where
     cast = prim__zextB16_Int
@@ -86,9 +90,10 @@ instance Enum Bits16 where
 -- Bits32
 
 instance Bits Bits32 where
-    or  = prim__orB32
-    and = prim__andB32
-    xor = prim__xorB32
+    or    = prim__orB32
+    and   = prim__andB32
+    xor   = prim__xorB32
+    compl = prim__complB32
 
 instance Cast Bits32 Int where
     cast = prim__zextB32_Int
@@ -113,5 +118,40 @@ instance Enum Bits32 where
          else []
          where
            go : List Bits32 -> Nat -> Bits32 -> List Bits32
+           go acc Z     m = m :: acc
+           go acc (S k) m = go (m :: acc) k (m - 1)
+
+------------------------------------------------------------------------
+-- Bits64
+
+instance Bits Bits64 where
+    or    = prim__orB64
+    and   = prim__andB64
+    xor   = prim__xorB64
+    compl = prim__complB64
+
+instance Cast Bits64 Integer where
+    cast = prim__zextB64_BigInt
+
+instance Cast Bits64 Nat where
+    cast = cast . cast {to = Integer}
+
+instance Cast Int Bits64 where
+    cast = prim__truncInt_B64
+
+instance Cast Nat Bits64 where
+    cast = cast . cast {to = Int}
+
+instance Enum Bits64 where
+    pred    n = n - 1
+    succ    n = n + 1
+    toNat   n = cast n
+    fromNat n = cast n
+    enumFromTo n m =
+      if n <= m
+         then go [] (cast {to = Nat} (m - n)) m
+         else []
+         where
+           go : List Bits64 -> Nat -> Bits64 -> List Bits64
            go acc Z     m = m :: acc
            go acc (S k) m = go (m :: acc) k (m - 1)

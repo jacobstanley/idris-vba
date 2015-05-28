@@ -23,6 +23,12 @@ main = do
   putStrLn $ "n16 = " ++ show n16
   putStrLn $ "n32 = " ++ show n32
 
+  let nstr = inet_ntoa h32
+  let hstr = inet_ntoa n32
+
+  putStrLn $ "nip4 = " ++ show nstr
+  putStrLn $ "hip4 = " ++ show hstr
+
   ve_handle printErrorCode $ do
     sock <- socket AF_INET Stream 0
     ve_lift (print sock)

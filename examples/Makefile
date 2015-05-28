@@ -1,8 +1,8 @@
-war: pythag.bas webcloud.bas
+warp: pythag.bas webcloud.bas
 
 %.bas: %.idr
 	idris $< --codegen vba -o $@
 
 clean:
-	rm *.ibc
-	rm *.bas
+	rm -f *.ibc
+	rm -f *.bas

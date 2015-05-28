@@ -16,6 +16,7 @@ data VBA_Types : Type -> Type where
      VBA_Bits8  : VBA_Types Bits8  -- Byte
      VBA_Bits16 : VBA_Types Bits16 -- Integer
      VBA_Bits32 : VBA_Types Bits32 -- Long
+     VBA_Bits64 : VBA_Types Bits64 -- LongLong
      VBA_Int    : VBA_Types Int    -- Long
      VBA_Float  : VBA_Types Float  -- Double
      VBA_String : VBA_Types String -- String
