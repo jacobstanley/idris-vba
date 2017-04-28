@@ -468,17 +468,10 @@ cgConst x = case x of
     TheWorld       -> "0"
     (AType _)      -> "0"
     StrType        -> "0"
-    ManagedPtrType -> "0"
-    BufferType     -> "0"
     WorldType      -> "0"
-    PtrType        -> "0"
     VoidType       -> "0"
 
     B64  _ -> error (msg "64-bit integers")
-    B8V  _ -> error (msg "8-bit vectors")
-    B16V _ -> error (msg "16-bit vectors")
-    B32V _ -> error (msg "32-bit vectors")
-    B64V _ -> error (msg "64-bit vectors")
     Forgot -> error "Tried to compile: Forgot"
   where
     msg name = name <> " not supported (tried to compile: " <> show x <> ")"

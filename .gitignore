@@ -1,1 +1,5 @@
 *.ibc
+.cabal-sandbox
+cabal.sandbox.config
+dist
+

@@ -1,8 +1,10 @@
 module Main where
 
-import Idris.Core.TT
 import Idris.AbsSyntax
+import Idris.Core.TT
 import Idris.ElabDecls
+import Idris.Main
+import Idris.ModeCommon
 import Idris.REPL
 
 import IRTS.Compiler
@@ -31,7 +33,7 @@ c_main :: Opts -> Idris ()
 c_main opts = do elabPrims
                  loadInputs (inputs opts) Nothing
                  mainProg <- elabMain
-                 ir <- compile (Via "vba") (output opts) (Just mainProg)
+                 ir <- compile (Via IBCFormat "vba") (output opts) (Just mainProg)
                  runIO $ codegenVBA ir
 
 main :: IO ()
@@ -39,5 +41,3 @@ main = do opts <- getOpts
           if (null (inputs opts))
              then showUsage
              else runMain (c_main opts)
-
-
